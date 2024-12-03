@@ -10,8 +10,8 @@ The driver uses *ioctl*, *sysfs*, and *mmap*. The internal *fb_read()* function 
  * A small helper sctips (*make_add.sh*) is provided because developing the driver requires frequent restarts. This will buid the driver, 'insmod' it, and set permissions on the sysfs location for user access.
  * A short python script (*fb_test.py*) is provided which sends an image to the display and calls the update function. Alternatively you can test it manually:
  ```
- $ dd if=/dev/urandom of=/dev/fb0
- $ echo 1 > /sys/bus/spi/devices/spi0.0/update_display
+ dd if=/dev/urandom of=/dev/fb0
+ echo 1 > /sys/bus/spi/devices/spi0.0/update_display
  ```
 
 ### ioctl
