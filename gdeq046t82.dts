@@ -1,0 +1,25 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835";
+    fragment@0 {
+        target = <&spi0>;
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            status = "okay";
+
+            spi-device@0 {
+                compatible = "gdeq,gdeq046t82";
+                reg = <0>;
+                spi-max-frequency = <10000000>;
+                status = "okay";
+                dc-gpios = <&gpio 25 0>;
+                res-gpios = <&gpio 24 0>;
+                busy-gpios = <&gpio 23 1>;
+            };
+        };
+    };
+};
+
