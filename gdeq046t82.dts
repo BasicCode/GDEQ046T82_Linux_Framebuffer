@@ -11,7 +11,7 @@
             status = "okay";
 
             spi-device@0 {
-                compatible = "gdeq,gdeq046t82";
+                compatible = "gooddisplay,gdeq046t82";
                 reg = <0>;
                 spi-max-frequency = <10000000>;
                 status = "okay";
