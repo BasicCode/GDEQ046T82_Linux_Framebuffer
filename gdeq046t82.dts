@@ -10,7 +10,7 @@
             #size-cells = <0>;
             status = "okay";
 
-            spi-device@0 {
+            display@0 {
                 compatible = "gooddisplay,gdeq046t82";
                 reg = <0>;
                 spi-max-frequency = <10000000>;
@@ -22,4 +22,3 @@
         };
     };
 };
-
