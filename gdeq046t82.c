@@ -30,8 +30,8 @@
 #define GDEQ046T82_HEIGHT 480
 #define GDEQ046T82_WIDTH 800
 #define GDEQ046T82_BUSY_TIMEMOUT 10000
-//#define BPP 24
 #define TIMER_INTERVAL 10 * HZ // 10 seconds in jiffies
+#define FULL_REFRESH_COUNT 10
 
 //Control signals
 struct gpio_desc *dc_gpio, *busy_gpio, *reset_gpio;
@@ -42,6 +42,11 @@ u8 out_buffer_gray[(GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8];
 
 //Global full-refresh counter
 int refresh_counter = 0;
+
+/** -------------
+ * Display functions
+ * --------------
+ */
 
 /*
  Down-samples the 8bpp framebuffer or other image to 2bpp for the
@@ -57,42 +62,43 @@ void gdeq046t82_framebuffer_to_buffer(u8 *buf, u32 width, u32 height, u8 bpp) {
 
     //For each pixel, extract the R, G, and B components,
     //and then convert to gray.
-    for(int i = 0; i < width * height * bytes_per_pixel; i += bytes_per_pixel) {
-        int r = buf[i];
-        int g = buf[i + 1];
-        int b = buf[i + 2];
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+			int i = ((y * width) + width - x) * bytes_per_pixel;
+            int r = buf[i];
+            int g = buf[i + 1];
+            int b = buf[i + 2];
 
-        int gray = (int)((red_weight * r + green_weight * g + blue_weight * b) / 1000);
-        /*Now the display takes 1-bit arrays for data. One for black/white
-        * and one for gray. So we convert our gray data in to two
-        * high/low arrays.
-        */
-        if(gray > gray_threshold_high)
-            out_buffer_black[(int)(i / bpp)] |= (0x01 << (7 - ((i / bytes_per_pixel) % 8)));
-        else
-            out_buffer_black[(int)(i / bpp)] &= ~(0x01 << (7 - ((i / bytes_per_pixel) % 8)));
-        if(gray > gray_threshold_low && gray < gray_threshold_high)
-            out_buffer_gray[(int)(i / bpp)] |= (0x01 << (7 - ((i / bytes_per_pixel) % 8)));
-        else
-            out_buffer_gray[(int)(i / bpp)] &= ~(0x01 << (7 - ((i / bytes_per_pixel) % 8)));
+            int gray = (int)((red_weight * r + green_weight * g + blue_weight * b) / 1000);
+
+			int j = ((y * width) + x) * bytes_per_pixel;
+
+            if (gray > gray_threshold_high)
+                out_buffer_black[(int)(j / bpp)] |= (0x01 << (7 - ((j / bytes_per_pixel) % 8)));
+            else
+                out_buffer_black[(int)(j / bpp)] &= ~(0x01 << (7 - ((j / bytes_per_pixel) % 8)));
+
+            if (gray > gray_threshold_low && gray < gray_threshold_high)
+                out_buffer_gray[(int)(j / bpp)] |= (0x01 << (7 - ((j / bytes_per_pixel) % 8)));
+            else
+                out_buffer_gray[(int)(j / bpp)] &= ~(0x01 << (7 - ((j / bytes_per_pixel) % 8)));
+        }
     }
 }
 
-static void gdeq046t82_pipe_enable(struct drm_simple_display_pipe *pipe,
-				struct drm_crtc_state *crtc_state,
-				struct drm_plane_state *plane_state)
+/*
+ * The display should SLEEP when not in use
+*/
+void gdeq046t82_sleep(struct mipi_dbi *dbi)
 {
-
+	mipi_dbi_command(dbi, 0x10, 0x01);
 }
 
-static void gdeq046t82_pipe_disable(struct drm_simple_display_pipe *pipe)
+void gdeq046t82_power_off(struct mipi_dbi *dbi)
 {
-	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
-	struct mipi_dbi *dbi = &dbidev->dbi;
-
-	DRM_DEBUG_KMS("\n");
+	mipi_dbi_command(dbi, 0x22, 0x83);
+	mipi_dbi_command(dbi, 0x20);
 }
-
 
 /*
  Wait for the busy signal to clear
@@ -110,6 +116,18 @@ int gdeq046t82_busy_wait(unsigned long int timeout_ms) {
 
     pr_err("gdeq046t82: busy_wait Timeout occurred\n");
     return -ETIMEDOUT;
+}
+
+/*
+ * Partial update command. I don't really understand how this is
+ * different.
+*/
+void gdeq046t82_partial_update(struct mipi_dbi *dbi) {
+    gdeq046t82_busy_wait(GDEQ046T82_BUSY_TIMEMOUT);
+
+    mipi_dbi_command(dbi, 0x21, 0x00, 0x00);
+	mipi_dbi_command(dbi, 0x22, 0xFC);
+    mipi_dbi_command(dbi, 0x20);
 }
 
 /*
@@ -155,61 +173,6 @@ void gdeq046t82_set_ram_area(struct mipi_dbi *dbi, u16 x, u16 y, u16 width, u16 
 }
 
 
-
-static void gdeq046t82_pipe_update(struct drm_simple_display_pipe *pipe,
-				struct drm_plane_state *old_state)
-{
-    struct drm_plane_state *state = pipe->plane.state;
-    struct drm_framebuffer *fb = state->fb;
-    struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
-    struct mipi_dbi *dbi = &dbidev->dbi;
-	struct drm_gem_dma_object *gem_obj;
-    struct drm_gem_vram_object *vram_obj;
-    void *vaddr;
-    u32 width, height;
-    u8 bpp;
-    int ret, idx;
-
-
-    if (!fb)
-        return;
-
-    if (!drm_dev_enter(pipe->crtc.dev, &idx))
-        return;
-
-    width = fb->width;
-    height = fb->height;
-    bpp = fb->format->cpp[0] * 8; // bits per pixel
-
-    gem_obj = drm_fb_dma_get_gem_obj(fb, 0);
-	void *src = gem_obj->vaddr;
-
-	gdeq046t82_framebuffer_to_buffer((u8 *)src, width, height, bpp);
-
-	gdeq046t82_set_ram_area(dbi, 0, 0, GDEQ046T82_WIDTH, GDEQ046T82_HEIGHT);
-
-    /* Write the framebuffer content to the display */
-    mipi_dbi_command_buf(dbi, 0x26,
-                               out_buffer_gray,
-                               (GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8);
-    mipi_dbi_command_buf(dbi, 0x24,
-                               out_buffer_black,
-                               (GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8);
-	
-	//Update the display. Full refresh every 6th update.
-	if(refresh_counter % 6 == 0) {
-		gdeq046t82_full_update(dbi, false); // full refresh
-	} else {
-		gdeq046t82_full_update(dbi, true); //Partial update
-	}
-	refresh_counter++;
-
-	//Verry slow updates
-	msleep(1000);
-
-    drm_dev_exit(idx);
-}
-
 /*
  Clear the display to white
 */
@@ -233,13 +196,73 @@ void gdeq046t82_clear(struct mipi_dbi *dbi) {
     gdeq046t82_full_update(dbi, false); // full refresh
 }
 
+
+/** ---------------
+ * DRM Functions
+  -----------------
+ */
+static void gdeq046t82_pipe_update(struct drm_simple_display_pipe *pipe,
+				struct drm_plane_state *old_state)
+{
+    struct drm_plane_state *state = pipe->plane.state;
+    struct drm_framebuffer *fb = state->fb;
+    struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
+    struct mipi_dbi *dbi = &dbidev->dbi;
+	struct drm_gem_dma_object *gem_obj;
+    u32 width, height;
+    u8 bpp;
+    int idx;
+
+
+    if (!fb)
+        return;
+
+    if (!drm_dev_enter(pipe->crtc.dev, &idx))
+        return;
+
+    width = fb->width;
+    height = fb->height;
+    bpp = fb->format->cpp[0] * 8; // bits per pixel
+
+    gem_obj = drm_fb_dma_get_gem_obj(fb, 0);
+	void *src = gem_obj->vaddr;
+
+	gdeq046t82_framebuffer_to_buffer((u8 *)src, width, height, bpp);
+
+	gdeq046t82_set_ram_area(dbi, 0, 0, GDEQ046T82_WIDTH, GDEQ046T82_HEIGHT);
+
+    /* Write the framebuffer content to the display */
+	if(refresh_counter % FULL_REFRESH_COUNT == 0) {
+    mipi_dbi_command_buf(dbi, 0x26,
+                               out_buffer_gray,
+                               (GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8);
+	}
+    mipi_dbi_command_buf(dbi, 0x24,
+                               out_buffer_black,
+                               (GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8);
+	
+	//Update the display. Full refresh every 6th update.
+	if(refresh_counter % FULL_REFRESH_COUNT == 0) {
+		gdeq046t82_full_update(dbi, false); // full refresh
+	} else {
+		//gdeq046t82_full_update(dbi, true); //Partial update
+		gdeq046t82_partial_update(dbi); //Partial update
+	}
+	refresh_counter++;
+
+	//Verry slow updates
+	//msleep(250);
+
+    drm_dev_exit(idx);
+}
+
 static void gdeq046t82_enable(struct drm_simple_display_pipe *pipe,
 			     struct drm_crtc_state *crtc_state,
 			     struct drm_plane_state *plane_state)
 {
 	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
 	struct mipi_dbi *dbi = &dbidev->dbi;
-	int ret, idx;
+	int idx;
 
 	if (!drm_dev_enter(pipe->crtc.dev, &idx))
 		return;
@@ -269,9 +292,22 @@ static void gdeq046t82_enable(struct drm_simple_display_pipe *pipe,
 	gdeq046t82_clear(dbi);
 
 	mipi_dbi_enable_flush(dbidev, crtc_state, plane_state);
-
-out_exit:
+	
 	drm_dev_exit(idx);
+}
+
+/**
+ * Shut down the display and release any resources
+ */
+static void gdeq046t82_release(struct drm_device *drm)
+{
+    struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(drm);
+    struct mipi_dbi *dbi = &dbidev->dbi;
+
+    // Call the power off function
+    gdeq046t82_power_off(dbi);
+
+	pr_info("gdeq046t82: Power OFF.\n");
 }
 
 
@@ -295,6 +331,7 @@ DEFINE_DRM_GEM_DMA_FOPS(gdeq046t82_fops);
 
 static const struct drm_driver gdeq046t82_drm_driver = {
 	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
+	.release = gdeq046t82_release,
 	.fops			= &gdeq046t82_fops,
 	DRM_GEM_DMA_DRIVER_OPS_VMAP,
 	.name			= "gdeq046t82",
@@ -310,7 +347,6 @@ static int gdeq046t82_probe(struct spi_device *spi)
 	struct mipi_dbi_dev *dbidev;
 	struct drm_device *drm;
 	struct mipi_dbi *dbi;
-	struct gpio_desc *rs;
 	u32 rotation = 0;
 	int ret;
 
@@ -377,17 +413,16 @@ static int gdeq046t82_probe(struct spi_device *spi)
 	return 0;
 }
 
+/** ----------------
+ * SPI functions
+ * -----------------
+ */
 static void gdeq046t82_remove(struct spi_device *spi)
 {
 	struct drm_device *drm = spi_get_drvdata(spi);
 
 	drm_dev_unplug(drm);
 	drm_atomic_helper_shutdown(drm);
-}
-
-static void gdeq046t82_shutdown(struct spi_device *spi)
-{
-	drm_atomic_helper_shutdown(spi_get_drvdata(spi));
 }
 
 static const struct of_device_id gdeq046t82_dt_ids[] = {
