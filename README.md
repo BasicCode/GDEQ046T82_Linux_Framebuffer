@@ -12,7 +12,18 @@ A Linux kernel module for the Good Display GDEQ046T82 display which uses the SSD
   
 ## Usage
 The driver uses DRM Tiny and also add framebuffer support.
- * Kernel version 6.1.81 (STM Linux)
+ * Kernel version 6.6+ (tested with 6.6 and 6.11)
+
+### Building the Module
+```bash
+make
+```
+
+### Building the Device Tree Overlay
+The device tree overlay blob (.dtbo) is compiled from the source file:
+```bash
+dtc -@ -I dts -O dtb -o gdeq046t82.dtbo gdeq046t82.dts
+```
 
 ## References
  * [Product page](https://www.good-display.com/product/457.html)
