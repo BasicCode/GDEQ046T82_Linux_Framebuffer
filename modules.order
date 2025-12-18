@@ -1,1 +1,0 @@
-/home/runner/work/GDEQ046T82_Linux_Framebuffer/GDEQ046T82_Linux_Framebuffer/gdeq046t82.o
