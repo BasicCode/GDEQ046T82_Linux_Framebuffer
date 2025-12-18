@@ -16,6 +16,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_fb_dma_helper.h>
+#include <drm/drm_fbdev_dma.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
@@ -52,7 +53,7 @@ int refresh_counter = 0;
  Down-samples the 8bpp framebuffer or other image to 2bpp for the
  display.
 */
-void gdeq046t82_framebuffer_to_buffer(u8 *buf, u32 width, u32 height, u8 bpp) {
+static void gdeq046t82_framebuffer_to_buffer(u8 *buf, u32 width, u32 height, u8 bpp) {
     const int gray_threshold_low = 50;
     const int gray_threshold_high = 150;
     const int red_weight = 212;
@@ -89,12 +90,12 @@ void gdeq046t82_framebuffer_to_buffer(u8 *buf, u32 width, u32 height, u8 bpp) {
 /*
  * The display should SLEEP when not in use
 */
-void gdeq046t82_sleep(struct mipi_dbi *dbi)
+static void gdeq046t82_sleep(struct mipi_dbi *dbi)
 {
 	mipi_dbi_command(dbi, 0x10, 0x01);
 }
 
-void gdeq046t82_power_off(struct mipi_dbi *dbi)
+static void gdeq046t82_power_off(struct mipi_dbi *dbi)
 {
 	mipi_dbi_command(dbi, 0x22, 0x83);
 	mipi_dbi_command(dbi, 0x20);
@@ -103,7 +104,7 @@ void gdeq046t82_power_off(struct mipi_dbi *dbi)
 /*
  Wait for the busy signal to clear
 */
-int gdeq046t82_busy_wait(unsigned long int timeout_ms) {
+static int gdeq046t82_busy_wait(unsigned long int timeout_ms) {
     unsigned long timeout = jiffies + msecs_to_jiffies(timeout_ms);
 
     while (time_before(jiffies, timeout)) {
@@ -122,7 +123,7 @@ int gdeq046t82_busy_wait(unsigned long int timeout_ms) {
  * Partial update command. I don't really understand how this is
  * different.
 */
-void gdeq046t82_partial_update(struct mipi_dbi *dbi) {
+static void gdeq046t82_partial_update(struct mipi_dbi *dbi) {
     gdeq046t82_busy_wait(GDEQ046T82_BUSY_TIMEMOUT);
 
     mipi_dbi_command(dbi, 0x21, 0x00, 0x00);
@@ -133,7 +134,7 @@ void gdeq046t82_partial_update(struct mipi_dbi *dbi) {
 /*
  * Instruct the display to perform either a partial (TRUE), or full (FALSE) update.
  */
-void gdeq046t82_full_update(struct mipi_dbi *dbi, int fast_refresh) {
+static void gdeq046t82_full_update(struct mipi_dbi *dbi, int fast_refresh) {
     //Just in case some muppet tries to call the update function too quickly
     gdeq046t82_busy_wait(GDEQ046T82_BUSY_TIMEMOUT);
 
@@ -150,7 +151,7 @@ void gdeq046t82_full_update(struct mipi_dbi *dbi, int fast_refresh) {
 /*
  * Set the partial ram area in the display controller memory.
  */
-void gdeq046t82_set_ram_area(struct mipi_dbi *dbi, u16 x, u16 y, u16 width, u16 height) {
+static void gdeq046t82_set_ram_area(struct mipi_dbi *dbi, u16 x, u16 y, u16 width, u16 height) {
     gdeq046t82_busy_wait(GDEQ046T82_BUSY_TIMEMOUT); //Wait for the device to become ready
 
     mipi_dbi_command(dbi, 0x11, 0x03); // x increment, y increment
@@ -176,7 +177,7 @@ void gdeq046t82_set_ram_area(struct mipi_dbi *dbi, u16 x, u16 y, u16 width, u16 
 /*
  Clear the display to white
 */
-void gdeq046t82_clear(struct mipi_dbi *dbi) {
+static void gdeq046t82_clear(struct mipi_dbi *dbi) {
     //Fill the buffer with some value
     for(int i = 0; i < (GDEQ046T82_WIDTH * GDEQ046T82_HEIGHT) / 8; i++) {
         out_buffer_black[i] = 0xFF;
@@ -406,7 +407,7 @@ static int gdeq046t82_probe(struct spi_device *spi)
 
 	spi_set_drvdata(spi, drm);
 
-	drm_fbdev_generic_setup(drm, 0);
+	drm_fbdev_dma_setup(drm, 0);
 
 	pr_info("gdeq046t82: Registered DRM Device as Tiny DRM.\n");
 

@@ -1,0 +1,1 @@
+savedcmd_/home/runner/work/GDEQ046T82_Linux_Framebuffer/GDEQ046T82_Linux_Framebuffer/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/runner/work/GDEQ046T82_Linux_Framebuffer/GDEQ046T82_Linux_Framebuffer/Module.symvers -T /home/runner/work/GDEQ046T82_Linux_Framebuffer/GDEQ046T82_Linux_Framebuffer/modules.order -i Module.symvers -e 
